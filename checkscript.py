@@ -68,6 +68,10 @@ def checkip(ip):
     else:
         return False
 
+def EXIT(code):
+    time.sleep(2)
+    exit(code)
+
 class baseConnect():
     def __init__(self,hostname,port,username,password):
         self.hostname=hostname
@@ -84,7 +88,7 @@ class baseConnect():
         try:
             self.con.connect(hostname=self.hostname, port=self.port, username=self.username, password=self.password)
         except :#paramiko.ssh_exception,e
-            logger.error("%s %d connect failed!"%(self.hostname,self.port))
+            logger.error("%s %d connect failed![username=%s,pwd=%s]",self.hostname,self.port,self.username,self.password)
             exit(1)
         logger.info("connect %s:%d success"%(self.hostname,self.port))
 
@@ -99,12 +103,14 @@ class baseConnect():
         str = stdout.read()
         strErr = stderr.read()
         if str!='':
+            logger.info("execCmd str:%s",str.decode('utf8').encode('gb2312'))
             return  str
         elif strErr != '':
             logger.error("%s" %strErr)
             exit(1)
             #return -1
         else:
+            logger.warning("execCmd:%s return NULL",cmd)
             return -1
 
     def uploadFile(self,localPath,remotePath):
@@ -152,15 +158,15 @@ class baseConnect():
                 return 0
         return 1
 
-    def localHostType(self):
+    def localHostType(self,port):
         '''主机类别'''
-        name1 = self.execCmd("netstat -anp | grep %d | grep ESTABLISHED"%self.port)
+        name1 = self.execCmd("netstat -anp | grep %d | grep ESTABLISHED"%int(port))
         name = self.execCmd("echo \"%s\" | awk -F' ' '{print $7}' | awk -F'/' '{print $NF}'"%name1)
         if name =="":
             logger.info( "未知服务器[%s]"%self.hostname)
             exit(1)
         elif name.find("dlb") != -1:
-            print "服务器[%s]为通信前置机"%self.hostname
+            logger.info("服务器[%s]为通信前置机"%self.hostname)
             name="dlb"
             # sid=self.execCmd("sed -n '/<ServerId>/p' /opt/HMS/DLB/DLB.xml")
             # sid = self.execCmd("echo %s | awk -F'ServerId>' '{print $2}' | sed 's/<\///'"%sid)
@@ -169,7 +175,7 @@ class baseConnect():
             #     print "前置机[%s]服务ID[$SID]重复或者数据库未配置服务，请重新配置"%self.hostname
             #     exit(1)
         elif name.find("dcs") != -1:
-            print "服务器[%s]为存储服务器" % self.hostname
+            logger.info("服务器[%s]为存储服务器" % self.hostname)
             name="dcs"
             # sid=self.execCmd("sed -n '/<ServerId>/p' /opt/HMS/DCS/DCS.xml")
             # sid = self.execCmd("echo %s | awk -F'ServerId>' '{print $2}' | sed 's/<\///'"%sid)
@@ -178,7 +184,7 @@ class baseConnect():
             #     print "存储服务[%s]服务ID[%s]重复或者数据库未配置服务，请重新配置"%self.hostname,sid
             #     exit(1)
         elif name.find("java") != -1:
-            print "服务器[%s]为纵向接口服务器" % self.hostname
+            logger.info("服务器[%s]为纵向接口服务器" % self.hostname)
             name="java"
         return name
 
@@ -191,7 +197,7 @@ class InterfaceServer(baseConnect):
     def mkdirCheckJavaDir(self):
         ret = self.execCmd("mkdir -p %s"%CHKJAVADIR)
         if ret == "":
-            print "创建接口服务临时目录成功"
+            logger.info("创建接口服务临时目录成功")
         return ret
 
     def rmCheckJavaDir(self):
@@ -201,23 +207,23 @@ class InterfaceServer(baseConnect):
         '''获取虚拟地址'''
         ret=self.execCmd("sed -n \'/virtual_ipaddress/{n;p}\' /etc/keepalived/keepalived.conf | awk -F\'/\' \'{print $1}\'")
         if ret == -1:
-            print "纵向接口服务的主从没做，请先做好主从后重新执行检查"
+            logger.info("纵向接口服务的主从没做，请先做好主从后重新执行检查")
             exit(1)
         else:
             ret=ret.expandtabs()
             ret=ret.strip()
             str=ret.splitlines(False)
-            print "纵向接口服务器虚拟IP地址:%s"%str[0]
+            logger.info("纵向接口服务器虚拟IP地址:%s"%str[0])
             self.virtualIP=str[0]
             return str
     def isCBSRunning(self):
         '''判断cbs服务是否运行'''
         ret=self.execCmd("ps -ef | grep cbs | grep -v grep")
         if ret == -1:
-            print "判断cbs服务运行失败！"
+            logger.info("判断cbs服务运行失败！")
             #exit(1)
         if ret == "":
-            print "cbs服务没有运行！"
+            logger.info("cbs服务没有运行！")
             return False
         return True
 
@@ -226,20 +232,20 @@ class InterfaceServer(baseConnect):
         ipList=[]
         ret = self.execCmd("netstat -anp | grep cbs | grep 8336 | grep ESTABLISHED | awk -F' ' '{print $5}'|awk -F':' '{print $1}'")
         if ret == -1:
-            print "获取数据库虚拟地址运行失败！"
+            logger.info("获取数据库虚拟地址运行失败！")
             exit(1)
         if ret == "":
-            print "获取数据库地址失败"
+            logger.info("获取数据库地址失败")
             return ipList
         ipList = ret.splitlines(False)
-        print "数据库的虚拟IP地址为%s"%ipList[0]
+        logger.info("数据库的虚拟IP地址为%s"%ipList[0])
         return ipList
 
     def checkInterServerId(self):
         self.mkdirCheckJavaDir()
         fp=open("./tmpdir/weblist",'r')
         if fp== None:
-            print "tmpdir/weblist 文件不存在"
+            logger.info("tmpdir/weblist 文件不存在")
             return False
         else:
             fp.close()
@@ -249,29 +255,30 @@ class InterfaceServer(baseConnect):
         sid = self.execCmd("sed -n \'/<CLIENT_ID>/p\' %s/WEB-INF/classes/config/project-cfg.xml | awk -F\'CLIENT_ID>\' \'{print $2}\' | sed \'s/<\///\'"%CHKJAVADIR)
         str = self.execCmd("sed -n \"/^%s/p\" %s/weblist"%(sid.strip("\n"),CHKJAVADIR))
         if str == "":
-            print "本纵向接口服务ID[%s]重复或者数据库未配置服务，请重新配置"%sid
+            logger.info("本纵向接口服务ID[%s]重复或者数据库未配置服务，请重新配置"%sid)
             self.rmCheckJavaDir()
             exit(1)
         else:
             self.execCmd("sed -i \"/^%s/d\" %s/weblist"%(sid.strip("\n"),CHKJAVADIR))
-            print "本机配置文件检查完成...ok, 开始检查其他服务器！"
+            logger.info("本机配置文件检查完成...ok, 开始检查其他服务器！")
             #self.downloadFile(localDir,remoteDir+"/weblist")
     #获取9001端口的所以ip
     def getAllConnectIp(self):
-        iplist=[]
+        ipdict={}
         lines = self.execCmd("netstat -anp | grep 9001 | grep -v LISTEN | grep cbs | grep ESTABLISHED | awk -F' ' '{print $5}'")
         if lines == -1:
-            return iplist
+            return ipdict
         lines=lines.splitlines(False)
         for line in lines:
             ip=self.execCmd("echo %s | awk -F':' '{print $1}'"%line)
             port=self.execCmd("echo %s | awk -F':' '{print $2}'"%line)
             ret=self.isLocalHost(ip.strip("\n"))
             if ret == True:
-                print "ip=%s 为本机地址,检查下一个服务器..."%ip
+                logger.info("ip=%s 为本机地址,检查下一个服务器..."%ip)
                 continue
-            iplist.append(ip.splitlines(False))
-        return iplist
+            #ipdict.append(ip.splitlines(False))
+            ipdict[ip.strip("\n")]=port.strip("\n")
+        return ipdict
     #发送需要的检查脚本
     def sendNeedFile(self):
         self.mkdirCheckJavaDir()
@@ -296,7 +303,7 @@ class InterfaceServer(baseConnect):
         global DBVIRIP
         ret=self.execCmd("sh %s/checkJava.sh %s %s %s %s"%(CHKJAVADIR,CHKJAVADIR,ORG_CODE,VIRIP,DBVIRIP))
         if str ==-1:
-            print "通信前置服务器[$ip]检查配置文件出现错误，根据提示修改后重新执行检查脚本！"%self.hostname
+            logger.info("通信前置服务器[$ip]检查配置文件出现错误，根据提示修改后重新执行检查脚本！"%self.hostname)
             exit(1)
         self.checkInterServerId()
         self.rmCheckJavaDir()
@@ -315,7 +322,7 @@ class DBServer(baseConnect):
         if self.dirFlag==False:
             ret = self.execCmd("mkdir -p %s"%CHKDBDIR)
             if ret == "":
-                print "数据库服务临时目录成功"
+                logger.info("数据库服务临时目录成功")
             self.dirFlag=True
             return ret
 
@@ -333,9 +340,9 @@ class DBServer(baseConnect):
         if ret == -1:
             exit(1)
         if ret == "":
-            print "数据库主从没有做好,请重新建立主从"
+            logger.info("数据库主从没有做好,请重新建立主从")
             return False
-        print "数据库从IP地址:%s"%ret
+        logger.info("数据库从IP地址:%s"%ret)
         ret = ret.strip("\n")
         return ret
 
@@ -351,7 +358,7 @@ class DBServer(baseConnect):
         if ret == -1:
             return ret
         ret=self.execCmd("sh %s/check_sync_status.bin"%CHKDBDIR)
-        print "run check_sync_status.bin \n %s"%ret
+        logger.info("run check_sync_status.bin \n %s"%ret)
         return ret
 
     def sendCheckDbShToCheckDBDir(self):
@@ -373,42 +380,42 @@ class DBServer(baseConnect):
         if ret == -1:
             return ret
         ret=self.execCmd("sh %s/checkDB.sh %s"%(CHKDBDIR,virip))
-        print "run checkDB.sh \n %s" % ret
+        logger.info("run checkDB.sh \n %s" % ret.decode('utf8').encode('gb2312'))
         return ret
 
     def getDBVirtualIp(self):
         ret=self.execCmd("sed -n '/virtual_ipaddress/{n;p}' /etc/keepalived/keepalived.conf | awk -F'/' '{print $1}'")
         if ret == "":
-            print "get virtual ip failed"
+            logger.info("get virtual ip failed")
             return False
-        print "数据库服务器虚拟IP地址:%s"%ret
+        logger.info("数据库服务器虚拟IP地址:%s"%ret)
         return ret
 
     def isVirIpEqDbIp(self,virIp,dbIp):
         ret=self.execCmd("echo %s | grep %s"%virIp,dbIp)
         if ret == "":
-            print "/opt/HMS/database.conf必须填写数据库的虚拟IP地址"
+            logger.info("/opt/HMS/database.conf必须填写数据库的虚拟IP地址")
             exit(1)
         return True
 
     def backHostCheck(self):
         ret = self.execCmd("sed -n '/sgrdb\/backup.sh/p' /etc/crontab" )
         if ret != -1:
-            print "备机不需要执行备份任务"
+            logger.info("备机不需要执行备份任务")
             exit(1)
         ret = self.execCmd("sed -n '/sgrdb\/setmaster.sh/p' /etc/crontab")
         if ret != -1:
-            print "备机不需要执行I6000定时任务"
+            logger.info("备机不需要执行I6000定时任务")
             exit(1)
 
     def masterHostCheck(self):
         ret = self.execCmd("sed -n '/sgrdb\/backup.sh/p' /etc/crontab" )
         if ret == -1:
-            print "主机需要执行备份任务！"
+            logger.info("主机需要执行备份任务！")
             exit(1)
         ret = self.execCmd("sed -n '/sgrdb\/setmaster.sh/p' /etc/crontab")
         if ret != -1:
-            print "主机需要执行I6000定时任务！"
+            logger.info("主机需要执行I6000定时任务！")
             exit(1)
 
     #Master
@@ -461,7 +468,7 @@ class DataStorageServer(baseConnect):
     def mkdirCheckDCSDir(self):
         ret = self.execCmd("mkdir -p %s"%CHKDCSDIR)
         if ret == "":
-            print "存储服务临时目录成功"
+            logger.info("存储服务临时目录成功")
         return ret
 
     def rmCheckDCSDir(self):
@@ -486,17 +493,17 @@ class DataStorageServer(baseConnect):
 
     def checkServerId(self):
         sid = self.execCmd("sed -n '/<ServerId>/p' /opt/HMS/DCS/DCS.xml")
-        sid = self.execCmd("echo %s | awk -F'ServerId>' '{print $2}' | sed 's/<\///'"%sid)
+        sid = self.execCmd("echo %s | awk -F'ServerId>' '{print $2}' | sed 's/<\///'"%sid.strip("\n"))
         str=self.execCmd("sed -n \"/^%s/p\" %s/dcslist"%(sid.strip("\n"),CHKDCSDIR))
         if str ==-1:
-            print "前置机[%s]服务ID[%s]重复或者数据库未配置服务，请重新配置"%(self.hostname,sid.strip("\n"))
+            logger.error("前置机[%s]服务ID[%s]重复或者数据库未配置服务，请重新配置"%(self.hostname,sid.strip("\n")))
             exit(1)
         global ORG_CODE
         global VIRIP
         global DBVIRIP
         ret=self.execCmd("sh %s/checkDCS.sh %s %s %s %s"%(CHKDCSDIR,CHKDCSDIR,ORG_CODE,VIRIP,DBVIRIP))
         if str ==-1:
-            print "通信前置服务器[$ip]检查配置文件出现错误，根据提示修改后重新执行检查脚本！"%self.hostname
+            logger.error("通信前置服务器[$ip]检查配置文件出现错误，根据提示修改后重新执行检查脚本！"%self.hostname)
             exit(1)
 
         self.rmCheckDCSDir()
@@ -510,7 +517,7 @@ class CommFrontServer(baseConnect):
     def mkdirCheckDASDir(self):
         ret = self.execCmd("mkdir -p %s"%CHKDASDIR)
         if ret == "":
-            print "前置机服务临时目录成功"
+            logger.info("前置机服务临时目录成功")
         return ret
 
     def rmCheckDASDir(self):
@@ -535,17 +542,17 @@ class CommFrontServer(baseConnect):
 
     def checkServerId(self):
         sid = self.execCmd("sed -n '/<ServerId>/p' /opt/HMS/DLB/DLB.xml")
-        sid = self.execCmd("echo %s | awk -F'ServerId>' '{print $2}' | sed 's/<\///'"%sid)
+        sid = self.execCmd("echo %s | awk -F'ServerId>' '{print $2}' | sed 's/<\///'"%sid.strip("\n"))
         str=self.execCmd("sed -n \"/^%s/p\" %s/daslist"%(sid.strip("\n"),CHKDASDIR))
         if str ==-1:
-            print "前置机[%s]服务ID[%s]重复或者数据库未配置服务，请重新配置"%(self.hostname,sid.strip("\n"))
+            logger.error("前置机[%s]服务ID[%s]重复或者数据库未配置服务，请重新配置"%(self.hostname,sid.strip("\n")))
             exit(1)
         global ORG_CODE
         global VIRIP
         global DBVIRIP
         ret=self.execCmd("sh %s/checkDAS.sh %s %s %s %s"%(CHKDASDIR,CHKDASDIR,ORG_CODE,VIRIP,DBVIRIP))
         if str ==-1:
-            print "通信前置服务器[$ip]检查配置文件出现错误，根据提示修改后重新执行检查脚本！"%self.hostname
+            logger.error("通信前置服务器[$ip]检查配置文件出现错误，根据提示修改后重新执行检查脚本！"%self.hostname)
             exit(1)
 
         self.rmCheckDASDir()
@@ -569,26 +576,27 @@ def ReadUserAndPwd():
         userpwd.ip=line[0:i]
         userpwd.port=line[i+1:j]
         userpwd.username=line[j+1:k]
-        userpwd.pwd=line[k+1:-1]
+        userpwd.pwd=line[k+1:].strip("\n")
         usrInfo[userpwd.ip]=userpwd
     return usrInfo
 
 def GetInterfaceInfo():
     ip = raw_input("纵向接口服务ip:")
     ret=checkip(ip)
-    if re == False:
-        print "输入ip错误"
+    if ret == False:
+        logger.info("输入ip错误")
         exit(1)
-    port = raw_input("纵向接口服务port:")
-    if port == 0:
-        port=16002
-    user = raw_input("纵向接口服务用户名:")
-    pwd = raw_input("纵向接口服务密码:")
+    # port = raw_input("纵向接口服务port:")
+    # if port == "":
+    #     port=16002
+    # user = raw_input("纵向接口服务用户名:")
+    # pwd = raw_input("纵向接口服务密码:")
     # ip="192.168.2.72"
     # port=22
     # user="root"
     # pwd="123456"
-    return ip,port,user,pwd
+    logger.info("纵向接口 ip=%s",ip)
+    return ip
 
 #前置机
 def dlbDealProcess(hostname,port,username,password):
@@ -621,8 +629,9 @@ def javaDealProcess(hostname,port,username,password):
 def dealProcess():
     logger.info("dealProcess....")
     usersInfo = ReadUserAndPwd()
-    hostname,port,username,password = GetInterfaceInfo()
-    interServer = InterfaceServer(hostname,int(port),username,password)
+    hostname = GetInterfaceInfo()
+    interServerInfo = usersInfo.get(hostname)
+    interServer = InterfaceServer(hostname,int(interServerInfo.port),interServerInfo.username,interServerInfo.pwd)
     if interServer ==None:
         logger.error("创建interServer 失败 ")
         exit(1)
@@ -634,7 +643,7 @@ def dealProcess():
     virDBIp=virDBIpList[0]
     virDBIpInfo = usersInfo.get(virDBIp)
     if None == virDBIpInfo:
-        print "未找到数据库虚拟ip对应的用户密码"
+        logger.info("未找到数据库虚拟ip对应的用户密码")
         exit(1)
     virDBServer= DBServer(virDBIpInfo.ip,int(virDBIpInfo.port),virDBIpInfo.username,virDBIpInfo.pwd)
     if None == virDBServer:
@@ -650,7 +659,7 @@ def dealProcess():
 
     backDBIpInfo = usersInfo.get(backDBIp)
     if None == backDBIpInfo:
-        print "未找到数据库back ip对应的用户密码"
+        logger.info("未找到数据库back ip对应的用户密码")
         exit(1)
     backDBServer = DBServer(backDBIpInfo.ip, int(backDBIpInfo.port), backDBIpInfo.username, backDBIpInfo.pwd)
     if None == backDBServer:
@@ -669,18 +678,18 @@ def dealProcess():
     DBVIRIP=virDBIp
     All9001Ip=interServer.getAllConnectIp()
     if len(All9001Ip) ==0:
-        print "纵向接口服务获取不到任何其它9001ip"
+        logger.info("纵向接口服务获取不到任何其它9001ip")
         exit(1)
 
-    for ip in All9001Ip:
-        info=usersInfo.get(ip[0])
+    for ip,port in All9001Ip.items():
+        info=usersInfo.get(ip)
         if None==info:
             continue
         basecon=baseConnect(info.ip,int(info.port), info.username,info.pwd)
         if None == basecon:
-            print "ssh连接ip[%s]失败"
+            logger.info("ssh连接ip[%s]失败")
             exit(1)
-        typeName=basecon.localHostType()
+        typeName=basecon.localHostType(port)
         basecon.disConnect()
         if typeName == "dlb":
             dlbDealProcess(info.ip,int(info.port), info.username,info.pwd)
@@ -692,7 +701,7 @@ def dealProcess():
             javaDealProcess(info.ip,int(info.port), info.username,info.pwd)
             pass
         else:
-            print "未知服务器 ip:%s"%info.ip
+            logger.info("未知服务器 ip:%s"%info.ip)
             pass
         pass
 
@@ -702,7 +711,7 @@ if __name__ == "__main__":
 
     fp=open("./orgCode",'r')
     if fp ==None:
-        print "open file ./orgCode failed"
+        logger.info("open file ./orgCode failed")
     content=fp.read()
     print content.decode('utf8').encode('gb2312')
     inputstr = raw_input("请输入网省公司名字:")
