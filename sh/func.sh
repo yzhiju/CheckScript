@@ -17,7 +17,7 @@ isLocalHost(){
 
 ##$1虚拟IP地址， $2端口,$3 url, $4 dstUrl,返回0表示成功，1-失败
 isLocalHostUrl(){
-     IPS=`LC_ALL=C ifconfig  | grep 'inet addr:'| grep -v '127.0.0.1' |cut -d: -f2 | awk '{ print $1}'`
+     IPS=`LC_ALL=C ifconfig  | grep 'inet addr:'| grep -v '127.0.0.1'| grep -v "$1" |cut -d: -f2 | awk '{ print $1}'`
         for tmp_ip in $IPS
         do
                 STR="http://$tmp_ip:$2/$3"

@@ -130,7 +130,7 @@ sed -i "/^$SID/d" $TMPDIR/weblist
 rm -rf $CHKJAVADIR
 echo "本机配置文件检查完成...ok, 开始检查其他服务器！"
 
-LINES=`netstat -anp | grep 9001 | grep -v LISTEN | grep cbs | grep ESTABLISHED | awk -F' ' '{print $5}'`
+LINES=`netstat -anp | grep 9001 | grep -v LISTEN | grep cbs | awk -F' ' '{print $5}' | sort -u`
 for line in $LINES
 do
    ip=`echo $line | awk -F':' '{print $1}'`

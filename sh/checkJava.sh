@@ -6,6 +6,7 @@ TMPDIR=$1
 ORGCODE=$2
 VIRIP=$3
 DBVIRIP=$4
+TYPE=$5
 source $TMPDIR/func.sh
 
 SSH_PORT=16001
@@ -14,6 +15,7 @@ SFTP_PORT=16002
 SFTPUSER=mysftp
 #~Mysftp2017hdms!
 SFTPPWD=~Mysftp2017hdms!
+LIST_FILE=/opt/HMS/mount.info
 
 TOTALSPACE=50
 
@@ -21,21 +23,123 @@ TOTALSPACE=50
 KAFKAADDR=10.68.28.95:9092
 mkdir -p $TMPDIR
 
+echo "---------------------------------------"
+echo "开始检查接口服务器，模式为[$TYPE]"
+
+FOUND_SFTP_PORT=`netstat -anop | grep $SFTP_PORT | grep LISTEN`
+if test -z "$FOUND_SFTP_PORT"
+then
+    SFTP_PORT=10022
+fi
+
+FOUND_SFTP_PORT=`netstat -anop | grep $SFTP_PORT | grep LISTEN`
+if test -z "$FOUND_SFTP_PORT"
+then
+    echo "没有找到sftp监听端口16002或者10022"
+    exit 1
+fi
+
 ##检查是否备机, 1-主, 0-备
 isLocalHost $VIRIP
 if [ $? -eq 0 ]; then
 #1-正在运行，0-停止
    isRunning cbs
-   [ $? -ne 0 ] && echo "备服务器不需要启动cbs服务" && exit 1
+   [ $? -ne 0 ] && echo "备服务器不需要启动cbs服务，执行/etc/init.d/hms stop停止掉" && exit 1
 
    isRunning angel
-   [ $? -ne 0 ] && echo "备服务器不需要启动angel服务" && exit 1
+   [ $? -ne 0 ] && echo "备服务器不需要启动angel服务，执行/etc/init.d/hms stop停止掉" && exit 1
+
+	if [ -f $LIST_FILE ]
+	then
+		while read line
+		do
+			if test "$line"
+			then
+				UUID=`echo "$line" | awk '{print $1}'`
+				DISK=`echo "$line" | awk '{print $2}'`
+				MOUNT=`mount | grep "$DISK"`
+				if test "$MOUNT"
+				then
+					echo "备机上不应该挂载$DISK，手动将$DISK的挂载umount，确保卸载完毕，通过mount | grep $DISK查看不到记录，ps -ef | grep umount_san.sh确保无umount_san.sh进程存在"
+					exit 1
+				fi
+			fi
+		done < $LIST_FILE
+	else
+		#检查文件夹同步
+		if [ -f /etc/init.d/run_rsync_sftp.sh -a -f /etc/init.d/run_rsync_wave.sh -a -f /etc/init.d/run_rsync_slave.sh -a -f /usr/bin/rsync ]
+		then
+			if test -z `ps -ef | grep /usr/bin/rsync | grep -v grep`
+			then
+				echo "/usr/bin/rsync进程未启动，查看/opt/HMS/update_master_status.sh中有没有/etc/init.d/run_rsync_slave.sh，并且是否/etc/init.d/run_rsync_slave.sh进程一直在运行"
+				exit 1
+			fi
+			if test `ps -ef | grep /etc/init.d/run_rsync_sftp.sh | grep -v grep`
+			then
+				echo "/etc/init.d/run_rsync_sftp.sh进程不应该启动，重启机器再重新检查"
+				exit 1
+			fi
+			if test `ps -ef | grep /etc/init.d/run_rsync_wave.sh | grep -v grep`
+			then
+				echo "/etc/init.d/run_rsync_wave.sh进程不应该启动，重启机器再重新检查"
+				exit 1
+			fi
+		else
+			echo "rsync没有安装"
+			exit 1
+		fi
+	fi
 else
+    if [ $TYPE = "slave" ];then
+        echo "两台接口服务都进入主模式 执行/etc/init.d/keepalived restart 确认能否切换主从 "
+        exit 1
+    fi
    isRunning cbs
-   [ $? -ne 1 ] && echo "主服务器需要启动cbs服务" && exit 1
+   [ $? -ne 1 ] && echo "主服务器需要启动cbs服务，执行/etc/init.d/hms start启动" && exit 1
 
    isRunning angel
-   [ $? -ne 1 ] && echo "主服务器不需要启动angel服务" && exit 1
+   [ $? -ne 1 ] && echo "主服务器需要启动angel服务，执行/etc/init.d/hms start启动" && exit 1
+
+	if [ -f $LIST_FILE ]
+	then
+		while read line
+		do
+			if test "$line"
+			then
+				UUID=`echo "$line" | awk '{print $1}'`
+				DISK=`echo "$line" | awk '{print $2}'`
+				MOUNT=`mount | grep "$DISK"`
+				if [ -z "$MOUNT" ]
+				then
+					echo "主服务器上必须挂载$DISK，手动执行mount $UUID $DISK，确保挂载成功，ps -ef | grep mount_san.sh确保无mount_san.sh进程存在"
+					exit 1
+				fi
+			fi
+		done < $LIST_FILE
+	else
+		#检查文件夹同步
+		if [ -f /etc/init.d/run_rsync_sftp.sh -a -f /etc/init.d/run_rsync_wave.sh -a -f /etc/init.d/run_rsync_slave.sh -a -f /usr/bin/rsync ]
+		then
+			if test -z `ps -ef | grep /etc/init.d/run_rsync_sftp.sh | grep -v grep`
+			then
+				echo "/etc/init.d/run_rsync_sftp.sh进程未启动，查看/opt/HMS/update_master_status.sh中有没有sh /usr/local/rsync/start_rsync_master.sh，并且/usr/local/rsync/start_rsync_master.sh中有/etc/init.d/run_rsync_sftp.sh"
+				exit 1
+			fi
+			if test -z `ps -ef | grep /etc/init.d/run_rsync_wave.sh | grep -v grep`
+			then
+				echo "/etc/init.d/run_rsync_wave.sh进程未启动，查看/opt/HMS/update_master_status.sh中有没有sh /usr/local/rsync/start_rsync_master.sh，并且/usr/local/rsync/start_rsync_master.sh中有/etc/init.d/run_rsync_wave.sh"
+				exit 1
+			fi
+			if test `ps -ef | grep /usr/bin/rsync | grep -v grep`
+			then
+				echo "/usr/bin/rsync进程不应该启动，重启机器再重新检查"
+				exit 1
+			fi
+		else
+			echo "rsync没有安装"
+			exit 1
+		fi
+	fi   
 fi
 
 #检查database.conf文件是否填写虚拟IP数据库地址
@@ -64,7 +168,7 @@ DB_FILE=$TMPDIR/WEB-INF/classes/config/db/druid-mysql.properties
 
 STR=`sed -n '/<PHYSICAL_ID>/p' $PROJECT_FILE | awk -F'PHYSICAL_ID>' '{print $2}' | sed 's/<\///'`
 if [ -z "$STR" -o "$STR" != "$ORGCODE" ]; then
-  echo "文件[WEB-INF/classes/config/project-cfg.xml]中网省公司编码[$STR]输入错误,请修改!"
+  echo "文件[WEB-INF/classes/config/project-cfg.xml]中网省公司编码[$STR]输入错误，应该为[$ORGCODE],请修改!"
   exit 1
 fi
 
@@ -83,7 +187,7 @@ fi
 #本机地址，非虚拟IP
 STR=`sed -n '/<LIVE_CONTEXT>/p' $PROJECT_FILE | awk -F'LIVE_CONTEXT>' '{print $2}' | sed 's/<\///'`
 isLocalHostUrl $VIRIP $SSH_PORT "hdms/live" $STR
-if [ $? -ne 0 ]; then
+if [ $? -ne 0 -a "$STR" != "http://localhost:$SSH_PORT/hdms/live" -a "$STR" != "http://127.0.0.1:$SSH_PORT/hdms/live" ]; then
    echo "文件[WEB-INF/classes/config/project-cfg.xml]中LIVE_CONTEXT字段配置错误"
    exit 1
 fi
@@ -91,7 +195,7 @@ fi
 STR=`sed -n '/<DATA_REPORT_PATHS>/p' $PROJECT_FILE | awk -F'DATA_REPORT_PATHS>' '{print $2}' | sed 's/<\///'`
 isLocalHostUrl $VIRIP $SSH_PORT "hdms/realdata/RealDataReport" $STR
 if [ $? -ne 0 ]; then
-   echo "文件[WEB-INF/classes/config/project-cfg.xml]中DATA_REPORT_PATHS字段配置错误"
+   echo "文件[WEB-INF/classes/config/project-cfg.xml]中DATA_REPORT_PATHS字段配置错误，IP地址要使用本机地址，不要用虚拟IP"
    exit 1
 fi
 
@@ -104,7 +208,7 @@ fi
 STR=`sed -n "$SFTP_LINE,/<IP>/p" $PROJECT_FILE | sed -n '/<IP>/p' | awk -F'IP>' '{print $2}' | sed 's/<\///'`
 isLocalHost "$STR"
 if [ $? -eq 0 -o -z "$STR" -o "$STR" = "$VIRIP" ]; then
-   echo "文件[WEB-INF/classes/config/project-cfg.xml]中SFTP的IP字段配置[$STR]错误"
+   echo "文件[WEB-INF/classes/config/project-cfg.xml]中SFTP的IP字段配置[$STR]错误，必须是本机IP"
    exit 1
 fi
 STR=`sed -n "$SFTP_LINE,/<PORT>/p" $PROJECT_FILE | sed -n '/<PORT>/p' | awk -F'PORT>' '{print $2}' | sed 's/<\///'`
@@ -165,9 +269,9 @@ fi
 ##db配置
 STR=`sed -n '/^datasource.url/p' $DB_FILE | awk -F'=' '{print $2}' | awk -F'jdbc:mysql://' '{print $2}' | awk -F'/' '{print $1}'`
 if [ -z "$STR" -o "$STR" != "$DBVIRIP:8336" ]; then
-   echo "文件[WEB-INF/classes/config/db/druid-mysql.properties]数据库的地址[$STR]填写错误，应填数据库服务虚拟IP"
+   echo "文件[WEB-INF/classes/config/db/druid-mysql.properties]数据库的地址[$STR]填写错误，应填数据库服务虚拟IP[$DBVIRIP]"
    exit 1
 fi
 
-echo "检查JBOSS配置完成，ok!"
+echo "检查JBOSS配置完成，ok!...success"
 exit 0
